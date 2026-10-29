@@ -390,6 +390,7 @@ private:
     RdnaOpcode currentOpcode = RdnaOpcode::Unknown;
     std::uint32_t f32DenormalFlush = 0u;
     bool float32FlushToZero = false;
+    bool float32FlushDeclared = false;
     bool float32DenormPreserve = false;
     bool float64 = false;
     std::uint32_t currentProgramCounter = 0;
