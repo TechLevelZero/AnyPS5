@@ -4608,10 +4608,10 @@ void StorageTexture::FlushDumpSelected(const char* reason) {
     for (const auto& [address, bytes] : ranges) static_cast<void>(FlushPending(address, bytes, nullptr, reason));
 }
 
-void StorageTexture::FlushAllPending(const char* reason) {
+void StorageTexture::FlushAllPending(const char* reason, VkDevice device) {
     std::optional<PublishOnCpuScope> onCpu;
     if (reason != nullptr && std::strcmp(reason, "idle") == 0) onCpu.emplace();
-    static_cast<void>(FlushPending(0, std::numeric_limits<std::size_t>::max(), nullptr, reason));
+    static_cast<void>(FlushPending(0, std::numeric_limits<std::size_t>::max(), nullptr, reason, PublishScope::Whole, nullptr, false, device));
 }
 
 std::size_t StorageTexture::StoreSmallPending(const char* reason) {

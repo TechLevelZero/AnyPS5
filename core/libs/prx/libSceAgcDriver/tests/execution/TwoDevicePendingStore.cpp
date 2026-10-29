@@ -12,6 +12,8 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <mutex>
 #include <span>
@@ -81,15 +83,28 @@ void FlushAll(const char* reason) {
     AgcDriver::Graphics::StorageTexture::FlushAllPending(reason);
 }
 
+void Label(AgcDriver::VulkanDevice& device, const std::uint32_t* label) {
+    {
+        std::lock_guard gpuLock(AgcDriver::GuestMemory::GpuMutex());
+        const std::uint32_t value = 1;
+        static_cast<void>(device.WriteLabelOnGpu(static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(label)), std::as_bytes(std::span(&value, 1)), 1, 0, false));
+        device.SubmitRecorded(false);
+    }
+    device.WaitIdle();
 }
 
-int main() {
+}
+
+int main(int argc, char** argv) {
     try {
+        const bool label = argc > 1 && std::strcmp(argv[1], "--label") == 0;
+        Require(!label || AgcDriver::Graphics::StorageTexture::StoreAtLabelRequested(std::getenv("APS5_STORE_AT_LABEL")), "two devices: --label needs APS5_STORE_AT_LABEL=1");
         const auto first = OpenVulkanTestDevice();
         if (!first) return VulkanTestSkipped;
         std::vector<std::uint32_t> storage((BlockBytes + 0x10000u) / 4u);
         auto* texels = reinterpret_cast<std::uint32_t*>((reinterpret_cast<std::uintptr_t>(storage.data()) + 0xffffu) & ~std::uintptr_t{0xffffu});
         std::fill(texels, texels + BlockBytes / 4u, Untouched);
+        std::array<std::uint32_t, 4> labelWords{};
         {
             GuestAllocations::Mutation mutation;
             mutation.Add(texels, BlockBytes, true, true, true);
@@ -113,10 +128,19 @@ int main() {
             second->WaitIdle();
             Require(AgcDriver::Graphics::StorageTexture::AnyPending(), "two devices: the second device's idle store took the first device's pending results");
             Require(!stored(), "two devices: the first device's results reached guest memory through the second device's idle store");
-            FlushAll("memory access");
-            first->WaitIdle();
-            Require(!AgcDriver::Graphics::StorageTexture::AnyPending(), "two devices: a flush with the second device active left the first device's results pending");
-            Require(stored(), "two devices: a flush with the second device active did not bring the first device's results to guest memory");
+            if (label) {
+                Label(*second, labelWords.data());
+                Require(AgcDriver::Graphics::StorageTexture::AnyPending(), "two devices: the second device's label store took the first device's pending results");
+                Require(!stored(), "two devices: the first device's results reached guest memory through the second device's label store");
+                Label(*first, labelWords.data());
+                Require(!AgcDriver::Graphics::StorageTexture::AnyPending(), "two devices: the first device's label store left its results pending");
+                Require(stored(), "two devices: the first device's label store did not bring its results to guest memory");
+            } else {
+                FlushAll("memory access");
+                first->WaitIdle();
+                Require(!AgcDriver::Graphics::StorageTexture::AnyPending(), "two devices: a flush with the second device active left the first device's results pending");
+                Require(stored(), "two devices: a flush with the second device active did not bring the first device's results to guest memory");
+            }
             second->WaitIdle();
         }
         {
